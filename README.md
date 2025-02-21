@@ -27,7 +27,7 @@ making it a great learning tool for database internals and data management.
 - **Variant (****`std::variant`****)**: Handling multiple data types efficiently
 - **Smart Pointers (****`std::unique_ptr`****, ****`std::shared_ptr`****)**: Memory management for dynamic objects
 
-##Run
+## How to execute
 use g++ final.cpp -std=c++17 to execute the file
 
 ## Commands
