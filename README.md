@@ -18,7 +18,6 @@ making it a great learning tool for database internals and data management.
 - **Libraries**:
   - Standard C++ libraries (`iostream`, `fstream`, `sstream`, `stdexcept`, `string`, `algorithm`)
   - Data structures and containers (`unordered_map`, `unordered_set`, `vector`, `variant`, `memory`)
-- **Build System**: GCC/Make
 
 ## Data Structures Used
 
@@ -28,8 +27,10 @@ making it a great learning tool for database internals and data management.
 - **Variant (****`std::variant`****)**: Handling multiple data types efficiently
 - **Smart Pointers (****`std::unique_ptr`****, ****`std::shared_ptr`****)**: Memory management for dynamic objects
 
+
 ## Commands
 
+use g++ final.cpp -std=c++17 to run the file
 ```
 Custom Database Engine
 Commands:
