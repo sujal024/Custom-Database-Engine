@@ -314,8 +314,6 @@ private:
         } else {
             std::cout << "Database '" << dbName << "' dropped" << std::endl << std::flush;
         }
-        // Optionally, delete the file (commented out to preserve data unless explicitly desired)
-        // std::remove((dbName + ".dat").c_str());
     }
 
     void parseInsert(const std::vector<Token>& tokens) {
