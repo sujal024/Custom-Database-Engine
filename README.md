@@ -2,7 +2,7 @@
 
 ## Overview
 The Custom Database Engine is a lightweight, in-memory database designed for simplicity and efficiency. It provides a command-line interface for basic database operations,
-making it a great learning tool for database internals and data management.
+making it a great learning tool for database internals and data management.The entire project is implemented using data structures like vectors,unordered_maps,etc to store and organize data.
 
 ## Features
 
