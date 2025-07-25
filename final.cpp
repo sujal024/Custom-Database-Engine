@@ -89,6 +89,14 @@ public:
         return results;
     }
 
+    vector<Row> getAllRows() const {
+        vector<Row> result;
+        for (const auto& pair : data) {
+            result.push_back(pair.second);
+        }
+        return result;
+    }
+
     void save(const string& filename) const {
         ofstream ofs(filename, ios::binary);
         if (!ofs) throw runtime_error("Cannot open file for writing");
@@ -108,7 +116,7 @@ public:
             int id = pair.first;
             ofs.write(reinterpret_cast<const char*>(&id), sizeof(id));
             for (const auto& field : pair.second) {
-                if (std::holds_alternative<int>(field)) {
+                if (holds_alternative<int>(field)) {
                     int val = std::get<int>(field);
                     ofs.write(reinterpret_cast<const char*>(&val), sizeof(val));
                 } else {
@@ -170,8 +178,8 @@ private:
     void validateRow(const Row& row) const {
         if (row.size() != schema.size()) throw runtime_error("Row size does not match schema");
         for (size_t i = 0; i < schema.size(); ++i) {
-            if ((schema[i].type == ColumnType::INT && !std::holds_alternative<int>(row[i])) ||
-                (schema[i].type == ColumnType::STRING && !std::holds_alternative<string>(row[i]))) {
+            if ((schema[i].type == ColumnType::INT && !holds_alternative<int>(row[i])) ||
+                (schema[i].type == ColumnType::STRING && !holds_alternative<string>(row[i]))) {
                 throw runtime_error("Type mismatch in row");
             }
         }
@@ -196,6 +204,8 @@ private:
     }
 };
 
+// ========================== DATABASE CLASS ============================= //
+
 class Database {
 private:
     unordered_map<string, unique_ptr<Table>> databases;
@@ -209,281 +219,337 @@ private:
         string value;
     };
 
-    vector<Token> tokenize(const string& input) {
-        vector<Token> tokens;
-        string token;
-        bool inString = false;
+    vector<Token> tokenize(const string& input);
+    void addToken(vector<Token>& tokens, const string& token);
 
-        for (size_t i = 0; i < input.size(); ++i) {
-            char c = input[i];
-            if (c == '\'') {
-                if (inString) {
-                    tokens.push_back({TokenType::STRING, token});
-                    token.clear();
-                    inString = false;
-                } else {
-                    inString = true;
-                }
-            } else if (inString) {
-                token += c;
-            } else if (isspace(c)) {
-                if (!token.empty()) {
-                    addToken(tokens, token);
-                    token.clear();
-                }
-            } else if (c == '(' || c == ')' || c == ',' || c == '=') {
-                if (!token.empty()) {
-                    addToken(tokens, token);
-                    token.clear();
-                }
-                tokens.push_back({TokenType::PUNCTUATION, string(1, c)});
-            } else {
-                token += c;
-            }
-        }
-        if (!token.empty()) addToken(tokens, token);
-        return tokens;
-    }
+    // Function declarations
+    void parseCreate(const vector<Token>& tokens);
+    void parseUse(const vector<Token>& tokens);
+    void parseShowDatabases(const vector<Token>& tokens);
+    void parseDropDatabase(const vector<Token>& tokens);
+    void parseInsert(const vector<Token>& tokens);
+    void parseSelect(const vector<Token>& tokens);
+    void parseSelectAll(const vector<Token>& tokens);
+    void parseUpdate(const vector<Token>& tokens);
+    void parseDelete(const vector<Token>& tokens);
 
-    void addToken(vector<Token>& tokens, const string& token) {
-        static const unordered_set<string> keywords = {
-            "CREATE", "DATABASE", "USE", "SHOW", "DATABASES",
-            "DROP", "INSERT", "INTO", "VALUES",
-            "SELECT", "FROM", "WHERE", "UPDATE", "SET", "DELETE"
-        };
-
-        if (keywords.find(token) != keywords.end()) {
-            tokens.push_back({TokenType::KEYWORD, token});
-        } else if (all_of(token.begin(), token.end(), ::isdigit)) {
-            tokens.push_back({TokenType::INT, token});
-        } else {
-            tokens.push_back({TokenType::IDENTIFIER, token});
-        }
-    }
-
-    void parseCreate(const vector<Token>& tokens) {
-        size_t i = 0;
-        expect(tokens, i++, "CREATE", TokenType::KEYWORD);
-        expect(tokens, i++, "DATABASE", TokenType::KEYWORD);
-        if (i >= tokens.size() || tokens[i].type != TokenType::IDENTIFIER) {
-            throw runtime_error("Expected database name after 'CREATE DATABASE'");
-        }
-        string dbName = tokens[i++].value;
-        if (databases.find(dbName) != databases.end()) {
-            throw runtime_error("Database '" + dbName + "' already exists");
-        }
-        databases[dbName] = make_unique<Table>(
-            vector<Column>{{"id", ColumnType::INT}, {"name", ColumnType::STRING}});
-        databases[dbName]->load(dbName + ".dat"); // Load if exists
-        databases[dbName]->createIndex(1);
-        currentDb = databases[dbName].get();
-        currentDbName = dbName;
-        cout << "Database '" << dbName << "' created and selected" << endl << flush;
-    }
-
-    void parseUse(const vector<Token>& tokens) {
-        size_t i = 0;
-        expect(tokens, i++, "USE", TokenType::KEYWORD);
-        if (i >= tokens.size() || tokens[i].type != TokenType::IDENTIFIER) {
-            throw runtime_error("Expected database name after 'USE'");
-        }
-        string dbName = tokens[i++].value;
-        if (databases.find(dbName) == databases.end()) {
-            throw runtime_error("Database '" + dbName + "' does not exist");
-        }
-        currentDb = databases[dbName].get();
-        currentDbName = dbName;
-        cout << "Switched to database '" << dbName << "'" << endl << flush;
-    }
-
-    void parseShowDatabases(const vector<Token>& tokens) {
-        size_t i = 0;
-        expect(tokens, i++, "SHOW", TokenType::KEYWORD);
-        expect(tokens, i++, "DATABASES", TokenType::KEYWORD);
-        if (i != tokens.size()) throw runtime_error("Extra tokens after 'SHOW DATABASES'");
-        cout << "Databases:\n";
-        for (const auto& pair : databases) {
-            cout << "  " << pair.first << (pair.first == currentDbName ? " (current)" : "") << endl;
-        }
-        cout << flush;
-    }
-
-    void parseDropDatabase(const vector<Token>& tokens) {
-        size_t i = 0;
-        expect(tokens, i++, "DROP", TokenType::KEYWORD);
-        expect(tokens, i++, "DATABASE", TokenType::KEYWORD);
-        if (i >= tokens.size() || tokens[i].type != TokenType::IDENTIFIER) {
-            throw runtime_error("Expected database name after 'DROP DATABASE'");
-        }
-        string dbName = tokens[i++].value;
-        if (databases.find(dbName) == databases.end()) {
-            throw runtime_error("Database '" + dbName + "' does not exist");
-        }
-        databases.erase(dbName);
-        if (dbName == currentDbName) {
-            currentDb = nullptr;
-            currentDbName.clear();
-            cout << "Database '" << dbName << "' dropped. No database selected." << endl << flush;
-        } else {
-            cout << "Database '" << dbName << "' dropped" << endl << flush;
-        }
-    }
-
-    void parseInsert(const vector<Token>& tokens) {
-        if (!currentDb) throw runtime_error("No database selected. Use 'CREATE DATABASE' or 'USE'");
-        size_t i = 0;
-        expect(tokens, i++, "INSERT", TokenType::KEYWORD);
-        expect(tokens, i++, "INTO", TokenType::KEYWORD);
-        expect(tokens, i++, "table", TokenType::IDENTIFIER);
-        expect(tokens, i++, "VALUES", TokenType::KEYWORD);
-        expect(tokens, i++, "(", TokenType::PUNCTUATION);
-
-        Row row;
-        const auto& schema = currentDb->getSchema();
-        for (size_t col = 0; col < schema.size(); ++col) {
-            if (col > 0) expect(tokens, i++, ",", TokenType::PUNCTUATION);
-            if (schema[col].type == ColumnType::INT) {
-                expect(tokens, i++, TokenType::INT);
-                row.push_back(stoi(tokens[i - 1].value));
-            } else {
-                expect(tokens, i++, TokenType::STRING);
-                row.push_back(tokens[i - 1].value);
-            }
-        }
-        expect(tokens, i++, ")", TokenType::PUNCTUATION);
-        currentDb->insert(row);
-        cout << "Inserted successfully into '" << currentDbName << "'" << endl << flush;
-    }
-
-    void parseSelect(const vector<Token>& tokens) {
-        if (!currentDb) throw runtime_error("No database selected. Use 'CREATE DATABASE' or 'USE'");
-        size_t i = 0;
-        expect(tokens, i++, "SELECT", TokenType::KEYWORD);
-        expect(tokens, i++, "*", TokenType::IDENTIFIER);
-        expect(tokens, i++, "FROM", TokenType::KEYWORD);
-        expect(tokens, i++, "table", TokenType::IDENTIFIER);
-        expect(tokens, i++, "WHERE", TokenType::KEYWORD);
-        expect(tokens, i++, "id", TokenType::IDENTIFIER);
-        expect(tokens, i++, "=", TokenType::PUNCTUATION);
-        if (i >= tokens.size() || tokens[i].type != TokenType::INT) {
-            throw runtime_error("Expected integer value after 'id =' (e.g., 1)");
-        }
-        expect(tokens, i++, TokenType::INT);
-        int id = stoi(tokens[i - 1].value);
-        if (i != tokens.size()) throw runtime_error("Extra tokens after command");
-        Row row = currentDb->get(id);
-        for (size_t j = 0; j < row.size(); ++j) {
-            visit([](const auto& v) { cout << v; }, row[j]);
-            if (j < row.size() - 1) cout << ", ";
-        }
-        cout << endl << flush;
-    }
-
-    void parseUpdate(const vector<Token>& tokens) {
-        if (!currentDb) throw runtime_error("No database selected. Use 'CREATE DATABASE' or 'USE'");
-        size_t i = 0;
-        expect(tokens, i++, "UPDATE", TokenType::KEYWORD);
-        expect(tokens, i++, "table", TokenType::IDENTIFIER);
-        expect(tokens, i++, "SET", TokenType::KEYWORD);
-        expect(tokens, i++, currentDb->getSchema()[1].name, TokenType::IDENTIFIER);
-        expect(tokens, i++, "=", TokenType::PUNCTUATION);
-        expect(tokens, i++, TokenType::STRING);
-        string newValue = tokens[i - 1].value;
-        expect(tokens, i++, "WHERE", TokenType::KEYWORD);
-        expect(tokens, i++, "id", TokenType::IDENTIFIER);
-        expect(tokens, i++, "=", TokenType::PUNCTUATION);
-        expect(tokens, i++, TokenType::INT);
-        int id = stoi(tokens[i - 1].value);
-        Row row = currentDb->get(id);
-        row[1] = newValue;
-        currentDb->update(id, row);
-        cout << "Updated successfully in '" << currentDbName << "'" << endl << flush;
-    }
-
-    void parseDelete(const vector<Token>& tokens) {
-        if (!currentDb) throw runtime_error("No database selected. Use 'CREATE DATABASE' or 'USE'");
-        size_t i = 0;
-        expect(tokens, i++, "DELETE", TokenType::KEYWORD);
-        expect(tokens, i++, "FROM", TokenType::KEYWORD);
-        expect(tokens, i++, "table", TokenType::IDENTIFIER);
-        expect(tokens, i++, "WHERE", TokenType::KEYWORD);
-        expect(tokens, i++, "id", TokenType::IDENTIFIER);
-        expect(tokens, i++, "=", TokenType::PUNCTUATION);
-        expect(tokens, i++, TokenType::INT);
-        int id = stoi(tokens[i - 1].value);
-        currentDb->remove(id);
-        cout << "Deleted successfully from '" << currentDbName << "'" << endl << flush;
-    }
-
-    void expect(const vector<Token>& tokens, size_t i, const string& value, TokenType type) {
-        if (i >= tokens.size() || tokens[i].type != type || tokens[i].value != value) {
-            throw runtime_error("Syntax error at token " + to_string(i));
-        }
-    }
-
-    void expect(const vector<Token>& tokens, size_t i, TokenType type) {
-        if (i >= tokens.size() || tokens[i].type != type) {
-            throw runtime_error("Syntax error at token " + to_string(i));
-        }
-    }
-
-    void execute(const string& command) {
-        auto tokens = tokenize(command);
-        if (tokens.empty()) return;
-
-        if (tokens[0].value == "CREATE") parseCreate(tokens);
-        else if (tokens[0].value == "USE") parseUse(tokens);
-        else if (tokens[0].value == "SHOW") parseShowDatabases(tokens);
-        else if (tokens[0].value == "DROP") parseDropDatabase(tokens);
-        else if (tokens[0].value == "INSERT") parseInsert(tokens);
-        else if (tokens[0].value == "SELECT") parseSelect(tokens);
-        else if (tokens[0].value == "UPDATE") parseUpdate(tokens);
-        else if (tokens[0].value == "DELETE") parseDelete(tokens);
-        else throw runtime_error("Unknown command: " + tokens[0].value);
-    }
+    void expect(const vector<Token>& tokens, size_t i, const string& value, TokenType type);
+    void expect(const vector<Token>& tokens, size_t i, TokenType type);
 
 public:
     Database() = default;
-
     ~Database() {
         for (auto& pair : databases) {
             pair.second->save(pair.first + ".dat");
         }
     }
 
-    void run() {
-        cout << "Custom Database Engine\nCommands:\n"
-             << "  CREATE DATABASE dbname\n"
-             << "  USE dbname\n"
-             << "  SHOW DATABASES\n"
-             << "  DROP DATABASE dbname\n"
-             << "  INSERT INTO table VALUES (1, 'name')\n"
-             << "  SELECT * FROM table WHERE id = 1\n"
-             << "  UPDATE table SET name = 'newname' WHERE id = 1\n"
-             << "  DELETE FROM table WHERE id = 1\n"
-             << "  EXIT to quit\n";
-
-        string line;
-        while (true) {
-            cout << (currentDbName.empty() ? "No DB> " : currentDbName + "> ") << flush;
-            if (!getline(cin, line)) break; // Handle Ctrl+D or EOF gracefully
-            if (line == "EXIT") break;
-            try {
-                execute(line);
-            } catch (const exception& e) {
-                cerr << "Error: " << e.what() << endl;
-            }
-        }
-    }
+    void execute(const string& command);
+    void run();
 };
 
-int main() {
-    try {
-        Database db;
-        db.run();
-    } catch (const exception& e) {
-        cerr << "Fatal error: " << e.what() << endl;
-        return 1;
+vector<Database::Token> Database::tokenize(const string& input) {
+    vector<Token> tokens;
+    string token;
+    bool inString = false;
+
+    for (size_t i = 0; i < input.size(); ++i) {
+        char c = input[i];
+        if (c == '\'') {
+            if (inString) {
+                tokens.push_back({TokenType::STRING, token});
+                token.clear();
+                inString = false;
+            } else {
+                inString = true;
+            }
+        } else if (inString) {
+            token += c;
+        } else if (isspace(c)) {
+            if (!token.empty()) {
+                addToken(tokens, token);
+                token.clear();
+            }
+        } else if (c == '(' || c == ')' || c == ',' || c == '=') {
+            if (!token.empty()) {
+                addToken(tokens, token);
+                token.clear();
+            }
+            tokens.push_back({TokenType::PUNCTUATION, string(1, c)});
+        } else {
+            token += c;
+        }
     }
+    if (!token.empty()) addToken(tokens, token);
+    return tokens;
+}
+
+void Database::addToken(vector<Token>& tokens, const string& token) {
+    static const unordered_set<string> keywords = {
+        "CREATE", "DATABASE", "USE", "SHOW", "DATABASES", "DROP",
+        "INSERT", "INTO", "VALUES", "SELECT", "FROM", "WHERE",
+        "UPDATE", "SET", "DELETE"
+    };
+    if (keywords.count(token)) tokens.push_back({TokenType::KEYWORD, token});
+    else if (all_of(token.begin(), token.end(), ::isdigit)) tokens.push_back({TokenType::INT, token});
+    else tokens.push_back({TokenType::IDENTIFIER, token});
+}
+
+// ===================== PARSE METHODS ============================ //
+
+void Database::parseCreate(const vector<Token>& tokens) {
+    if (!currentDb) {
+        size_t i = 0;
+        expect(tokens, i++, "CREATE", TokenType::KEYWORD);
+        expect(tokens, i++, "DATABASE", TokenType::KEYWORD);
+        if (i >= tokens.size() || tokens[i].type != TokenType::IDENTIFIER) {
+            throw runtime_error("Expected database name");
+        }
+        string dbName = tokens[i++].value;
+        if (databases.count(dbName)) throw runtime_error("Database already exists");
+        databases[dbName] = make_unique<Table>(vector<Column>{{"id", ColumnType::INT}, {"name", ColumnType::STRING}});
+        databases[dbName]->load(dbName + ".dat");
+        databases[dbName]->createIndex(1);
+        currentDb = databases[dbName].get();
+        currentDbName = dbName;
+        cout << "Database '" << dbName << "' created and selected.\n";
+    } else {
+        throw runtime_error("Database already selected. Use DROP DATABASE first.");
+    }
+}
+
+void Database::parseUse(const vector<Token>& tokens) {
+    size_t i = 0;
+    expect(tokens, i++, "USE", TokenType::KEYWORD);
+    if (i >= tokens.size() || tokens[i].type != TokenType::IDENTIFIER) {
+        throw runtime_error("Expected database name");
+    }
+    string dbName = tokens[i++].value;
+    if (!databases.count(dbName)) throw runtime_error("Database not found");
+    currentDb = databases[dbName].get();
+    currentDbName = dbName;
+    cout << "Using database '" << dbName << "'\n";
+}
+
+void Database::parseShowDatabases(const vector<Token>& tokens) {
+    size_t i = 0;
+    expect(tokens, i++, "SHOW", TokenType::KEYWORD);
+    expect(tokens, i++, "DATABASES", TokenType::KEYWORD);
+    if (i != tokens.size()) throw runtime_error("Extra tokens after 'SHOW DATABASES'");
+
+    cout << "Databases:\n";
+    for (const auto& p : databases)
+        cout << "  " << p.first << (p.first == currentDbName ? " (current)" : "") << endl;
+}
+
+void Database::parseDropDatabase(const vector<Token>& tokens) {
+    size_t i = 0;
+    expect(tokens, i++, "DROP", TokenType::KEYWORD);
+    expect(tokens, i++, "DATABASE", TokenType::KEYWORD);
+    if (i >= tokens.size() || tokens[i].type != TokenType::IDENTIFIER) {
+        throw runtime_error("Expected database name");
+    }
+    string dbName = tokens[i++].value;
+    if (!databases.count(dbName)) throw runtime_error("Database not found");
+
+    databases.erase(dbName);
+    if (currentDbName == dbName) {
+        currentDb = nullptr;
+        currentDbName.clear();
+    }
+    cout << "Dropped database '" << dbName << "'\n";
+}
+
+void Database::parseInsert(const vector<Token>& tokens) {
+    if (!currentDb) throw runtime_error("No database selected");
+
+    size_t i = 0;
+    expect(tokens, i++, "INSERT", TokenType::KEYWORD);
+    expect(tokens, i++, "INTO", TokenType::KEYWORD);
+    expect(tokens, i++, "table", TokenType::IDENTIFIER);
+    expect(tokens, i++, "VALUES", TokenType::KEYWORD);
+    expect(tokens, i++, "(", TokenType::PUNCTUATION);
+
+    Row row;
+    const auto& schema = currentDb->getSchema();
+    for (size_t j = 0; j < schema.size(); ++j) {
+        if (j > 0) expect(tokens, i++, ",", TokenType::PUNCTUATION);
+        if (schema[j].type == ColumnType::INT) {
+            expect(tokens, i++, TokenType::INT);
+            row.push_back(stoi(tokens[i - 1].value));
+        } else {
+            expect(tokens, i++, TokenType::STRING);
+            row.push_back(tokens[i - 1].value);
+        }
+    }
+
+    expect(tokens, i++, ")", TokenType::PUNCTUATION);
+    if (i != tokens.size()) throw runtime_error("Extra tokens after INSERT");
+
+    currentDb->insert(row);
+    cout << "Insert OK\n";
+}
+
+void Database::parseSelect(const vector<Token>& tokens) {
+    if (!currentDb) throw runtime_error("No database selected");
+
+    size_t i = 0;
+    expect(tokens, i++, "SELECT", TokenType::KEYWORD);
+    expect(tokens, i++, "*", TokenType::IDENTIFIER);
+    expect(tokens, i++, "FROM", TokenType::KEYWORD);
+    expect(tokens, i++, "table", TokenType::IDENTIFIER);
+    expect(tokens, i++, "WHERE", TokenType::KEYWORD);
+    expect(tokens, i++, "id", TokenType::IDENTIFIER);
+    expect(tokens, i++, "=", TokenType::PUNCTUATION);
+    expect(tokens, i++, TokenType::INT);
+    if (i != tokens.size()) throw runtime_error("Extra tokens after SELECT");
+
+    int id = stoi(tokens[i - 1].value);
+    Row row = currentDb->get(id);
+    for (size_t j = 0; j < row.size(); ++j) {
+        visit([](auto&& v) { cout << v; }, row[j]);
+        if (j < row.size() - 1) cout << ", ";
+    }
+    cout << "\n";
+}
+
+void Database::parseSelectAll(const vector<Token>& tokens) {
+    if (!currentDb) throw runtime_error("No database selected");
+
+    size_t i = 0;
+    expect(tokens, i++, "SELECT", TokenType::KEYWORD);
+    expect(tokens, i++, "*", TokenType::IDENTIFIER);
+    expect(tokens, i++, "FROM", TokenType::KEYWORD);
+    expect(tokens, i++, "table", TokenType::IDENTIFIER);
+    if (i != tokens.size()) throw runtime_error("Extra tokens after SELECT *");
+
+    auto rows = currentDb->getAllRows();
+    if (rows.empty()) {
+        cout << "No data found.\n";
+        return;
+    }
+
+    for (const auto& row : rows) {
+        for (size_t j = 0; j < row.size(); ++j) {
+            visit([](auto&& v) { cout << v; }, row[j]);
+            if (j < row.size() - 1) cout << ", ";
+        }
+        cout << "\n";
+    }
+}
+
+// ✅ FIXED: Complete implementation of parseUpdate
+void Database::parseUpdate(const vector<Token>& tokens) {
+    if (!currentDb) throw runtime_error("No database selected");
+
+    size_t i = 0;
+    expect(tokens, i++, "UPDATE", TokenType::KEYWORD);
+    expect(tokens, i++, "table", TokenType::IDENTIFIER);
+    expect(tokens, i++, "SET", TokenType::KEYWORD);
+    expect(tokens, i++, "name", TokenType::IDENTIFIER);  // Assuming we're updating the 'name' column
+    expect(tokens, i++, "=", TokenType::PUNCTUATION);
+    expect(tokens, i++, TokenType::STRING);
+    string newValue = tokens[i - 1].value;
+    expect(tokens, i++, "WHERE", TokenType::KEYWORD);
+    expect(tokens, i++, "id", TokenType::IDENTIFIER);
+    expect(tokens, i++, "=", TokenType::PUNCTUATION);
+    expect(tokens, i++, TokenType::INT);
+    if (i != tokens.size()) throw runtime_error("Extra tokens after UPDATE");
+
+    int id = stoi(tokens[i - 1].value);
+
+    // Get the existing row and update it
+    Row row = currentDb->get(id);  // This will throw if ID not found
+    row[1] = newValue;  // Update the name column (index 1)
+    currentDb->update(id, row);
+    cout << "Update OK\n";
+}
+
+// ✅ FIXED: Complete implementation of parseDelete
+void Database::parseDelete(const vector<Token>& tokens) {
+    if (!currentDb) throw runtime_error("No database selected");
+
+    size_t i = 0;
+    expect(tokens, i++, "DELETE", TokenType::KEYWORD);
+    expect(tokens, i++, "FROM", TokenType::KEYWORD);
+    expect(tokens, i++, "table", TokenType::IDENTIFIER);
+    expect(tokens, i++, "WHERE", TokenType::KEYWORD);
+    expect(tokens, i++, "id", TokenType::IDENTIFIER);
+    expect(tokens, i++, "=", TokenType::PUNCTUATION);
+    expect(tokens, i++, TokenType::INT);
+    if (i != tokens.size()) throw runtime_error("Extra tokens after DELETE");
+
+    int id = stoi(tokens[i - 1].value);
+
+    // Check if the ID exists before trying to delete
+    try {
+        currentDb->get(id);  // This will throw if ID not found
+        currentDb->remove(id);
+        cout << "Delete OK\n";
+    } catch (const exception&) {
+        throw runtime_error("ID " + to_string(id) + " not found");
+    }
+}
+
+void Database::expect(const vector<Token>& tokens, size_t i, const string& value, TokenType type) {
+    if (i >= tokens.size() || tokens[i].type != type || tokens[i].value != value) {
+        throw runtime_error("Expected '" + value + "' at position " + to_string(i));
+    }
+}
+
+void Database::expect(const vector<Token>& tokens, size_t i, TokenType type) {
+    if (i >= tokens.size() || tokens[i].type != type) {
+        throw runtime_error("Unexpected token at position " + to_string(i));
+    }
+}
+
+void Database::execute(const string& command) {
+    auto tokens = tokenize(command);
+    if (tokens.empty()) return;
+
+    if (tokens[0].value == "CREATE") parseCreate(tokens);
+    else if (tokens[0].value == "USE") parseUse(tokens);
+    else if (tokens[0].value == "SHOW") parseShowDatabases(tokens);
+    else if (tokens[0].value == "DROP") parseDropDatabase(tokens);
+    else if (tokens[0].value == "INSERT") parseInsert(tokens);
+    else if (tokens[0].value == "SELECT" && tokens.size() == 4) parseSelectAll(tokens);
+    else if (tokens[0].value == "SELECT") parseSelect(tokens);
+    else if (tokens[0].value == "UPDATE") parseUpdate(tokens);
+    else if (tokens[0].value == "DELETE") parseDelete(tokens);
+    else throw runtime_error("Unknown command: " + tokens[0].value);
+}
+
+void Database::run() {
+    string line;
+    while (true) {
+        cout << (currentDbName.empty() ? "NoDB> " : currentDbName + "> ") << flush;
+        if (!getline(cin, line) || line == "EXIT") break;
+        try {
+            execute(line);
+        } catch (const exception& e) {
+            cerr << "Error: " << e.what() << "\n";
+        }
+    }
+}
+
+// ✅ Helper function to show available commands
+void showAvailableCommands() {
+    cout << "\n📋 Available commands:\n";
+    cout << "  CREATE DATABASE dbname\n";
+    cout << "  USE dbname\n";
+    cout << "  SHOW DATABASES\n";
+    cout << "  DROP DATABASE dbname\n";
+    cout << "  INSERT INTO table VALUES (id, 'name')\n";
+    cout << "  SELECT * FROM table\n";
+    cout << "  SELECT * FROM table WHERE id = number\n";
+    cout << "  UPDATE table SET name = 'newname' WHERE id = number\n";
+    cout << "  DELETE FROM table WHERE id = number\n";
+    cout << "  EXIT\n" << endl;
+}
+
+int main() {
+   showAvailableCommands();
+    Database db;
+    db.run();
     return 0;
 }
